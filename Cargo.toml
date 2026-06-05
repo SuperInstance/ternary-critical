@@ -1,0 +1,7 @@
+[package]
+name = "ternary-critical"
+version = "0.1.0"
+edition = "2021"
+description = "Critical phenomena in ternary Ising models — Monte Carlo simulation, phase transitions, critical exponents"
+license = "MIT"
+[dependencies]
