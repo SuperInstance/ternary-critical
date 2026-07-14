@@ -227,12 +227,17 @@ mod tests {
     fn test_ising_new() {
         let m = TernaryIsing::new(4, 4);
         assert_eq!(m.get(0, 0), 0);
+        // all spins default to the neutral 0 state
+        assert_eq!(m.width, 4);
+        assert_eq!(m.height, 4);
+        assert_eq!(m.spins.len(), 16);
     }
 
     #[test]
     fn test_ising_ordered() {
         let mut m = TernaryIsing::new(4, 4);
         m.ordered();
+        // all +1 -> mean spin = +1 -> ternary magnetization +1
         assert_eq!(m.magnetization(), 1);
     }
 
@@ -240,6 +245,7 @@ mod tests {
     fn test_ising_critical_seed() {
         let mut m = TernaryIsing::new(3, 3);
         m.critical_seed();
+        // 3x3 seed is the repeating pattern -1,0,1 three times: sum = 0
         assert_eq!(m.magnetization(), 0);
     }
 
@@ -247,41 +253,74 @@ mod tests {
     fn test_local_energy_aligned() {
         let mut m = TernaryIsing::new(4, 4);
         m.ordered();
-        let e = m.local_energy(1, 1);
-        assert!(e < 0); // aligned = negative energy
+        // interior site (1,1): s=+1, four +1 neighbors -> -1*(1*4) = -4
+        assert_eq!(m.local_energy(1, 1), -4);
+    }
+
+    #[test]
+    fn test_local_energy_corner() {
+        let mut m = TernaryIsing::new(4, 4);
+        m.ordered();
+        // corner (0,0): only 2 neighbors (right + down) -> -1*(1*2) = -2.
+        // This exercises the x>0 / y>0 boundary guards in local_energy.
+        assert_eq!(m.local_energy(0, 0), -2);
     }
 
     #[test]
     fn test_local_energy_misaligned() {
         let mut m = TernaryIsing::new(4, 4);
         m.ordered();
-        m.set(1, 1, -1); // anti-aligned with neighbors
-        let e = m.local_energy(1, 1);
-        assert!(e > 0); // misaligned = positive energy
+        m.set(1, 1, -1); // anti-aligned with its four +1 neighbors
+        assert_eq!(m.local_energy(1, 1), 4); // -(-1 * 4) = +4
+    }
+
+    #[test]
+    fn test_local_energy_insulator() {
+        let mut m = TernaryIsing::new(4, 4);
+        m.ordered();
+        m.set(1, 1, 0); // the neutral "insulator" state
+        assert_eq!(m.local_energy(1, 1), 0); // 0 * anything = 0
     }
 
     #[test]
     fn test_total_energy_ordered() {
         let mut m = TernaryIsing::new(4, 4);
         m.ordered();
+        // 4x4 has 4*3 horizontal + 4*3 vertical = 24 bonds; each -1 -> -24.
         let e = m.total_energy();
-        assert!(e < 0); // ordered = negative total energy
+        assert_eq!(e, -24);
     }
 
     #[test]
-    fn test_mc_sweep_runs() {
+    fn test_set_clamps_out_of_range() {
+        let mut m = TernaryIsing::new(2, 2);
+        m.set(0, 0, 5); // above +1 clamps to +1
+        m.set(1, 0, -9); // below -1 clamps to -1
+        assert_eq!(m.get(0, 0), 1);
+        assert_eq!(m.get(1, 0), -1);
+    }
+
+    #[test]
+    fn test_empty_lattice_guards() {
+        // 0x0 lattice: must not divide by zero (n == 0 early returns).
+        let m = TernaryIsing::new(0, 0);
+        assert_eq!(m.magnetization(), 0);
+        assert_eq!(m.total_energy(), 0);
+    }
+
+    #[test]
+    fn test_mc_sweep_keeps_valid_spins() {
         let mut m = TernaryIsing::new(4, 4);
         m.critical_seed();
         m.temperature = 0;
         m.mc_sweep();
-        // Just check it doesn't crash and values are valid
         for &s in &m.spins {
             assert!((-1..=1).contains(&s));
         }
     }
 
     #[test]
-    fn test_run() {
+    fn test_run_history_length() {
         let mut m = TernaryIsing::new(4, 4);
         m.critical_seed();
         m.temperature = 1;
@@ -290,39 +329,53 @@ mod tests {
     }
 
     #[test]
-    fn test_cold_orders() {
+    fn test_cold_energy_non_increasing() {
+        // At temperature -1 only strict energy decreases are accepted, so the
+        // total energy can never increase across sweeps (greedy descent).
         let mut m = TernaryIsing::new(4, 4);
         m.critical_seed();
         m.temperature = -1;
+        let e_before = m.total_energy();
         m.run(20);
-        // After many cold sweeps, should be mostly aligned
-        let mag = m.magnetization();
-        assert!(mag == -1 || mag == 0 || mag == 1); // valid ternary
+        let e_after = m.total_energy();
+        assert!(e_after <= e_before);
     }
 
     #[test]
-    fn test_hot_disorders() {
-        let mut m = TernaryIsing::new(4, 4);
-        m.ordered();
-        m.temperature = 1;
-        m.run(10);
-        // Hot temperature should disorder the system
-        // Just check it runs
-        assert!(m.spins.iter().all(|&s| (-1..=1).contains(&s)));
+    fn test_dynamics_are_deterministic() {
+        // The sweep has no RNG, so identical seeds + temperatures must produce
+        // bit-identical final configurations.
+        let mut a = TernaryIsing::new(4, 4);
+        a.critical_seed();
+        a.temperature = 1;
+        a.run(10);
+
+        let mut b = TernaryIsing::new(4, 4);
+        b.critical_seed();
+        b.temperature = 1;
+        b.run(10);
+
+        assert_eq!(a.spins, b.spins);
     }
 
     #[test]
-    fn test_susceptibility() {
+    fn test_susceptibility_zero() {
+        // constant magnetization -> zero variance -> 0
         let history = vec![(1i8, -10i32), (1, -10), (1, -10)];
-        let chi = TernaryIsing::susceptibility(&history);
-        assert_eq!(chi, 0); // constant magnetization = zero susceptibility
+        assert_eq!(TernaryIsing::susceptibility(&history), 0);
+    }
+
+    /// Susceptibility for a fluctuating history: m = [+1, +1, -1, -1].
+    /// mean = 0, variance = (1+1+1+1)/4 = 1 -> ternary 1.
+    #[test]
+    fn test_susceptibility_nonzero_exact() {
+        let history = vec![(1i8, -10i32), (1, -10), (-1, -10), (-1, -10)];
+        assert_eq!(TernaryIsing::susceptibility(&history), 1);
     }
 
     #[test]
-    fn test_binder_cumulant() {
-        let history = vec![(1i8, -10i32), (1, -10), (1, -10)];
-        let u4 = binder_cumulant(&history);
-        assert!((-1..=1).contains(&u4));
+    fn test_susceptibility_empty() {
+        assert_eq!(TernaryIsing::susceptibility(&[]), 0);
     }
 
     /// Exact check of the Binder cumulant formula.
@@ -337,17 +390,20 @@ mod tests {
         assert_eq!(binder_cumulant(&history), 1);
     }
 
-    /// Susceptibility for a fluctuating history: m = [+1, +1, -1, -1].
-    /// mean = 0, variance = (1+1+1+1)/4 = 1 -> ternary 1.
     #[test]
-    fn test_susceptibility_nonzero_exact() {
-        let history = vec![(1i8, -10i32), (1, -10), (-1, -10), (-1, -10)];
-        assert_eq!(TernaryIsing::susceptibility(&history), 1);
+    fn test_binder_cumulant_too_short() {
+        // fewer than 2 samples -> defined as 0
+        assert_eq!(binder_cumulant(&[(1i8, -10i32)]), 0);
     }
 
     #[test]
-    fn test_find_critical_temperature() {
+    fn test_find_critical_temperature_deterministic() {
+        // The Monte Carlo sweep is fully deterministic (no RNG), so for fixed
+        // inputs this returns a constant. It scans the three ternary
+        // temperatures and reports the one with peak susceptibility.
         let tc = find_critical_temperature(4, 4, 5);
-        assert!((-1..=1).contains(&tc));
+        assert_eq!(tc, -1);
+        // a second call must reproduce the same value (no hidden state)
+        assert_eq!(find_critical_temperature(4, 4, 5), tc);
     }
 }
