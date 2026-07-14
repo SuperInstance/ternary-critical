@@ -91,14 +91,21 @@ impl TernaryIsing {
         e
     }
 
-    /// Magnetization (average spin)
+    /// Magnetization, quantized to a ternary value in `{-1, 0, +1}`.
+    ///
+    /// Computed as the mean spin `(Σ sᵢ) / N` and then mapped to the nearest
+    /// ternary state with a ±1/3 threshold: a net majority beyond one third of
+    /// the sites rounds to `±1`, otherwise `0`. The arithmetic is performed in
+    /// `i64` so that `sum * 3` cannot overflow even for very large lattices
+    /// (the previous `i32` intermediate overflowed once the lattice exceeded
+    /// ~715 million sites).
     pub fn magnetization(&self) -> i8 {
-        let sum: i32 = self.spins.iter().map(|&s| s as i32).sum();
-        let n = self.spins.len() as i32;
+        let n = self.spins.len() as i64;
         if n == 0 {
             return 0;
         }
-        (sum * 3 / n).clamp(-1, 1) as i8
+        let sum: i64 = self.spins.iter().map(|&s| s as i64).sum();
+        ((sum * 3 / n).clamp(-1, 1)) as i8
     }
 
     /// One Monte Carlo sweep: try to flip each spin
@@ -188,8 +195,12 @@ pub fn find_critical_temperature(width: usize, height: usize, sweeps: usize) -> 
     critical_t
 }
 
-/// Binder cumulant: U4 = 1 - <m⁴>/(3<m²>²)
-/// At critical point, this should be universal
+/// Binder cumulant: `U4 = 1 - <m⁴>/(3<m²>²)`.
+///
+/// At a critical point this ratio is (approximately) universal. Because the
+/// crate is integer/ternary-valued the result is quantized to `{-1, 0, +1}`;
+/// for a history whose magnetization is never zero this yields `1` (the
+/// ternary rounding of the ideal `2/3`), and `0` when `<m²> = 0`.
 pub fn binder_cumulant(history: &[(i8, i32)]) -> i8 {
     if history.len() < 2 {
         return 0;
@@ -201,7 +212,10 @@ pub fn binder_cumulant(history: &[(i8, i32)]) -> i8 {
     if m2 == 0 {
         return 0;
     }
-    let u4 = 1 - m4 * 3 / (m2 * m2);
+    // Factor of 3 belongs in the DENOMINATOR: U4 = 1 - <m^4> / (3 * <m^2>^2).
+    // (A previous version put it in the numerator, yielding 1 - 3<m^4>/<m^2>^2,
+    // which is mathematically wrong and produced spurious -1 values.)
+    let u4 = 1 - m4 / (3 * m2 * m2);
     u4.clamp(-1, 1) as i8
 }
 
@@ -309,6 +323,26 @@ mod tests {
         let history = vec![(1i8, -10i32), (1, -10), (1, -10)];
         let u4 = binder_cumulant(&history);
         assert!((-1..=1).contains(&u4));
+    }
+
+    /// Exact check of the Binder cumulant formula.
+    ///
+    /// For a history of constant magnetization m = +1 the ideal value is
+    /// U4 = 1 - <m^4>/(3<m^2>^2) = 1 - 1/(3*1) = 2/3, which quantizes to the
+    /// ternary value +1. The old code computed `1 - 3*<m^4>/<m^2>^2` = -2
+    /// (clamped to -1); this test pins the corrected value.
+    #[test]
+    fn test_binder_cumulant_formula_exact() {
+        let history = vec![(1i8, -10i32), (1, -10), (1, -10)];
+        assert_eq!(binder_cumulant(&history), 1);
+    }
+
+    /// Susceptibility for a fluctuating history: m = [+1, +1, -1, -1].
+    /// mean = 0, variance = (1+1+1+1)/4 = 1 -> ternary 1.
+    #[test]
+    fn test_susceptibility_nonzero_exact() {
+        let history = vec![(1i8, -10i32), (1, -10), (-1, -10), (-1, -10)];
+        assert_eq!(TernaryIsing::susceptibility(&history), 1);
     }
 
     #[test]
