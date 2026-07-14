@@ -14,14 +14,15 @@ use alloc::{vec, vec::Vec};
 pub struct TernaryIsing {
     pub width: usize,
     pub height: usize,
-    pub spins: Vec<i8>, // {-1, 0, +1}
+    pub spins: Vec<i8>,  // {-1, 0, +1}
     pub temperature: i8, // ternary: -1=cold, 0=critical, 1=hot
 }
 
 impl TernaryIsing {
     pub fn new(width: usize, height: usize) -> Self {
         Self {
-            width, height,
+            width,
+            height,
             spins: vec![0; width * height],
             temperature: 0,
         }
@@ -37,7 +38,9 @@ impl TernaryIsing {
 
     /// Initialize all spins to +1 (ordered state)
     pub fn ordered(&mut self) {
-        for s in &mut self.spins { *s = 1; }
+        for s in &mut self.spins {
+            *s = 1;
+        }
     }
 
     /// Initialize with a "critical" seed: mix of all three states
@@ -56,10 +59,18 @@ impl TernaryIsing {
     pub fn local_energy(&self, x: usize, y: usize) -> i8 {
         let s = self.get(x, y);
         let mut sum = 0i8;
-        if x > 0 { sum += self.get(x - 1, y); }
-        if x + 1 < self.width { sum += self.get(x + 1, y); }
-        if y > 0 { sum += self.get(x, y - 1); }
-        if y + 1 < self.height { sum += self.get(x, y + 1); }
+        if x > 0 {
+            sum += self.get(x - 1, y);
+        }
+        if x + 1 < self.width {
+            sum += self.get(x + 1, y);
+        }
+        if y > 0 {
+            sum += self.get(x, y - 1);
+        }
+        if y + 1 < self.height {
+            sum += self.get(x, y + 1);
+        }
         -(s * sum)
     }
 
@@ -84,7 +95,9 @@ impl TernaryIsing {
     pub fn magnetization(&self) -> i8 {
         let sum: i32 = self.spins.iter().map(|&s| s as i32).sum();
         let n = self.spins.len() as i32;
-        if n == 0 { return 0; }
+        if n == 0 {
+            return 0;
+        }
         (sum * 3 / n).clamp(-1, 1) as i8
     }
 
@@ -97,24 +110,28 @@ impl TernaryIsing {
             for x in 0..self.width {
                 let current = self.get(x, y);
                 let e_current = self.local_energy(x, y);
-                
+
                 // Try all possible flips
-                let candidates = if current == 1 { vec![-1, 0] }
-                                 else if current == -1 { vec![0, 1] }
-                                 else { vec![-1, 1] };
-                
+                let candidates = if current == 1 {
+                    vec![-1, 0]
+                } else if current == -1 {
+                    vec![0, 1]
+                } else {
+                    vec![-1, 1]
+                };
+
                 for new_spin in candidates {
                     self.set(x, y, new_spin);
                     let e_new = self.local_energy(x, y);
                     let de = e_new - e_current;
-                    
+
                     let accept = match self.temperature {
-                        -1 => de < 0,   // very cold: only energy decreases
-                        0 => de <= 0,   // critical: accept non-increasing
-                        1 => true,      // hot: accept everything
+                        -1 => de < 0, // very cold: only energy decreases
+                        0 => de <= 0, // critical: accept non-increasing
+                        1 => true,    // hot: accept everything
                         _ => de <= 0,
                     };
-                    
+
                     if accept {
                         break; // keep the flip
                     } else {
@@ -137,12 +154,16 @@ impl TernaryIsing {
 
     /// Susceptibility: variance of magnetization
     pub fn susceptibility(history: &[(i8, i32)]) -> i8 {
-        if history.is_empty() { return 0; }
+        if history.is_empty() {
+            return 0;
+        }
         let n = history.len() as i32;
         let mean_m: i32 = history.iter().map(|(m, _)| *m as i32).sum::<i32>() / n;
-        let var: i32 = history.iter()
+        let var: i32 = history
+            .iter()
             .map(|(m, _)| (*m as i32 - mean_m).pow(2))
-            .sum::<i32>() / n;
+            .sum::<i32>()
+            / n;
         var.clamp(-1, 1) as i8
     }
 }
@@ -170,12 +191,16 @@ pub fn find_critical_temperature(width: usize, height: usize, sweeps: usize) -> 
 /// Binder cumulant: U4 = 1 - <m⁴>/(3<m²>²)
 /// At critical point, this should be universal
 pub fn binder_cumulant(history: &[(i8, i32)]) -> i8 {
-    if history.len() < 2 { return 0; }
+    if history.len() < 2 {
+        return 0;
+    }
     let n = history.len() as i32;
     let m_vals: Vec<i32> = history.iter().map(|(m, _)| *m as i32).collect();
     let m2: i32 = m_vals.iter().map(|m| m * m).sum::<i32>() / n;
     let m4: i32 = m_vals.iter().map(|m| m * m * m * m).sum::<i32>() / n;
-    if m2 == 0 { return 0; }
+    if m2 == 0 {
+        return 0;
+    }
     let u4 = 1 - m4 * 3 / (m2 * m2);
     u4.clamp(-1, 1) as i8
 }
@@ -237,7 +262,7 @@ mod tests {
         m.mc_sweep();
         // Just check it doesn't crash and values are valid
         for &s in &m.spins {
-            assert!(s >= -1 && s <= 1);
+            assert!((-1..=1).contains(&s));
         }
     }
 
@@ -269,7 +294,7 @@ mod tests {
         m.run(10);
         // Hot temperature should disorder the system
         // Just check it runs
-        assert!(m.spins.iter().all(|&s| s >= -1 && s <= 1));
+        assert!(m.spins.iter().all(|&s| (-1..=1).contains(&s)));
     }
 
     #[test]
@@ -283,12 +308,12 @@ mod tests {
     fn test_binder_cumulant() {
         let history = vec![(1i8, -10i32), (1, -10), (1, -10)];
         let u4 = binder_cumulant(&history);
-        assert!(u4 >= -1 && u4 <= 1);
+        assert!((-1..=1).contains(&u4));
     }
 
     #[test]
     fn test_find_critical_temperature() {
         let tc = find_critical_temperature(4, 4, 5);
-        assert!(tc >= -1 && tc <= 1);
+        assert!((-1..=1).contains(&tc));
     }
 }
