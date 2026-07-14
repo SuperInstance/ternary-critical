@@ -1,7 +1,20 @@
 //! # ternary-critical
 //!
-//! Critical phenomena in ternary Ising models.
-//! Monte Carlo simulation, phase transitions, critical temperature, and universality.
+//! Critical phenomena in ternary Ising models: a `no_std`/`alloc` crate that
+//! simulates a two-dimensional lattice whose sites carry a spin in
+//! `{-1, 0, +1}` and estimates the associated phase-transition observables
+//! (energy, magnetization, susceptibility, Binder cumulant, critical
+//! temperature).
+//!
+//! ## When to use this
+//!
+//! Use `ternary-critical` when you want a small, dependency-free, fully
+//! reproducible (deterministic) model of a ternary-valued Ising lattice — for
+//! teaching, prototyping ternary/quantized neural-network dynamics, or as a
+//! building block in a larger `no_std` fleet. The spin set is deliberately
+//! quantized to three states and every observable is reported as a ternary
+//! `i8`, so this crate is *not* a high-precision physics simulator; reach for a
+//! floating-point Monte Carlo toolkit when you need sub-quantization accuracy.
 
 #![forbid(unsafe_code)]
 #![no_std]
@@ -9,16 +22,28 @@
 extern crate alloc;
 use alloc::{vec, vec::Vec};
 
-/// A 2D ternary Ising model
+/// A two-dimensional ternary Ising lattice.
+///
+/// Each cell holds a spin in `{-1, 0, +1}` stored in row-major order. The
+/// `0` state is an energy-neutral "insulator": it contributes nothing to the
+/// bond energy regardless of its neighbors, so it breaks interaction chains
+/// without adding energy.
 #[derive(Debug, Clone)]
 pub struct TernaryIsing {
+    /// Lattice width (number of columns).
     pub width: usize,
+    /// Lattice height (number of rows).
     pub height: usize,
-    pub spins: Vec<i8>,  // {-1, 0, +1}
-    pub temperature: i8, // ternary: -1=cold, 0=critical, 1=hot
+    /// Flat row-major spin buffer; each entry is clamped to `{-1, 0, +1}`.
+    pub spins: Vec<i8>,
+    /// Ternary temperature knob: `-1` = cold, `0` = critical, `+1` = hot.
+    /// Controls the acceptance rule used by [`mc_sweep`](TernaryIsing::mc_sweep).
+    pub temperature: i8,
 }
 
 impl TernaryIsing {
+    /// Create an `width × height` lattice with every spin initialized to the
+    /// neutral `0` state and `temperature = 0` (critical).
     pub fn new(width: usize, height: usize) -> Self {
         Self {
             width,
@@ -28,10 +53,13 @@ impl TernaryIsing {
         }
     }
 
+    /// Read the spin at column `x`, row `y` (row-major indexing).
     pub fn get(&self, x: usize, y: usize) -> i8 {
         self.spins[y * self.width + x]
     }
 
+    /// Set the spin at column `x`, row `y`, clamping the value into
+    /// `{-1, 0, +1}` so the lattice invariant can never be violated.
     pub fn set(&mut self, x: usize, y: usize, v: i8) {
         self.spins[y * self.width + x] = v.clamp(-1, 1);
     }
